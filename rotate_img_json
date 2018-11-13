@@ -1,0 +1,159 @@
+import cv2
+from PIL import Image
+import json
+import os
+import math
+import base64
+import matplotlib.pyplot as plt
+import json_to_dataset as j2d
+
+
+def fcn_data(json_path,save_dir):
+    #jsonpath:需要形成fcn输入图片形式【Pascal Voc数据集类型】的jason文件路径
+    #save_dir:保存图片路径，给定到对应机型文件
+    lbl = j2d.json2dataset(json_path)
+    json_name = os.path.split(json_path)[1] #得到对应的json名称
+    png_name = os.path.splitext(json_name)[0] + '.png' #分离出对应图像名称
+    j2d.utils.lblsave(os.path.join(save_dir, png_name), lbl)
+
+
+def rotatejson(bmpname,center,angle,savedir,outname):
+    #输入
+    #center：yuanshi图像中心
+    #bmpname：原始的图像名称
+    #angle：旋转角度
+    #savedir：输出json的路径
+    #outimgname: 输出的图像名称
+    #
+    jsonname =  bmpname[:-4] + '.json'    #读取原来json的文件
+    outjsonname = savedir + '\\' +outname[:-4] + '.json'                 #旋转后对应json文件
+    fin = open(jsonname,'r',encoding = 'utf-8')
+    fout = open(outjsonname,'w',encoding = 'utf-8')
+    setting = json.load(fin)
+    count = 0
+    #旋转后的图像大小
+    im = Image.open(os.path.join(savedir ,outname)) # rotation之后的图像
+    height = im.size[0]
+    width = im.size[1]
+    if height > width:
+        max = height;
+    else:
+        max = width
+
+    # 原始图像大小
+    im2 = Image.open(bmpname)
+    cow = im2.size[0]
+    row = im2.size[1]
+    
+    
+    for point in setting['shapes'][0]['points']:
+        delx = (point[0] - center[0] )*max /cow           #对应点suofang旋转
+        dely = (point[1] - center[1] )* max/row
+        centerx = int( height/2)
+        centery = int( width/2)
+        theta = math.pi* (360 - angle) / 180.0
+        rotatex = int( math.cos(theta)*delx - math.sin(theta)*dely + centerx)
+        rotatey = int( math.cos(theta)*dely + math.sin(theta)*delx + centery)
+
+        point = [rotatex,rotatey]
+        #plt.scatter(rotatex,rotatey)
+        setting['shapes'][0]['points'][count] = point
+        count +=1
+    #plt.show()
+    
+    setting['imagePath'] = outname          #更改对应图像名称
+    imagePath = os.path.join(savedir ,outname)
+    with open(imagePath, 'rb') as f:
+        imageData = f.read()
+    setting['imageData'] = base64.b64encode(imageData).decode('utf-8')
+    fout.write(json.dumps(setting))
+    fin.close()
+    fout.close
+    return outjsonname #用作形成dataset文件
+
+def subimage(image,theta,savename):
+    im = Image.open(image)
+    cow = im.size[0]
+    row = im.size[1]
+    if cow > row:
+        max = cow
+    else :
+        max = row
+    im = im.resize((300,300))
+    im_rotate = im.rotate(theta)
+    im_rotate.save(savename)
+    return im_rotate
+
+def Rotation_and_dataset(bmpname,theta,savedir):
+    #输入
+    #bmpname：需要旋转的原图像路径
+    #savedir:保存生成数据的路径，提供到大文件夹
+    #单次旋转的角度
+    #获得图像中心
+    img = cv2.imread(bmpname)
+    width = img.shape[0]
+    height = img.shape[1]
+    center = (int(height/2),int(width/2))
+    
+    curdir, tail= os.path.split(bmpname)    #获取当前路径curdir，图像名称tail
+    airplane = os.path.split(curdir)[1]     #airplane获取当前飞机的机型
+
+    count=0
+    save_rotate_dir = save_dir + '\\images\\'    #保存旋转后的图像和json 文件的路径
+    if(os.path.exists(save_rotate_dir)==0):     #如果文件不存在即创造文件夹
+        os.makedirs(save_rotate_dir)
+
+    while (count<360):
+        #图像旋转
+        filename = tail[:-4] + '_r'  + str(count) +'.bmp'    #旋转后的文件名字
+        filepath = os.path.join(save_rotate_dir ,airplane)     #保存旋转后的文件路径 对应到机型
+        if os.path.exists(filepath) == 0 :
+            os.makedirs(filepath)
+        filepath = os.path.join(filepath ,filename)     #baocun旋转后的tuxiang路径
+
+        #图片旋转
+        image = subimage(bmpname,count,filepath)  #得到旋转后的图片image格式
+        #json文件旋转
+        outjson = rotatejson(bmpname,center,count,os.path.split(filepath)[0],filename) #outjson返回旋转后的json文件路径
+        #对应生成dataset
+        data_save_path = os.path.join(save_dir,'annotations')
+        ## 测试所用dataset
+        if count%50 == 0:#能被70整除 化为测试集 比例约为4:1
+            test_rotate_dir = os.path.join(save_rotate_dir,'test')  # 测试原始图像训练地址
+            if os.path.exists(test_rotate_dir) == 0 :
+                os.makedirs(test_rotate_dir)
+            test_rotate_dir = os.path.join(test_rotate_dir,filename)
+            image.save(test_rotate_dir)
+
+            data_save_path = os.path.join(data_save_path,'test')
+            #data_save_path = os.path.join(data_save_path,airplane)
+            if os.path.exists(data_save_path) == 0 :
+                os.makedirs(data_save_path)
+            fcn_data(outjson,data_save_path)
+        else:
+            train_rotate_dir = os.path.join(save_rotate_dir,'train')
+            if os.path.exists(train_rotate_dir) == 0 :
+                os.makedirs(train_rotate_dir)
+            train_rotate_dir = os.path.join(train_rotate_dir,filename)
+            image.save(train_rotate_dir)
+
+            data_save_path = os.path.join(data_save_path,'train')
+            #data_save_path = os.path.join(data_save_path,airplane)
+            if os.path.exists(data_save_path) == 0 :
+                os.makedirs(data_save_path)
+            fcn_data(outjson,data_save_path)
+        count=count+theta
+
+
+
+if __name__ == '__main__':
+    walkpath = "D:\\project\\airplane_data\\datatrain-adjust"
+    save_dir = "D:\\project\\airplane_data\\dataset"  #保存形成的Pascal数据集的路径
+    for dirpath,dirs,files in os.walk(walkpath):
+        for name in files:
+            if os.path.splitext(name)[1] == '.bmp':
+                bmpname = os.path.join(dirpath,name)
+                #bmpname = "D:\\project\\airplane_data\\datatrain-adjust\\A-10\\A-10-10.bmp"
+                Rotation_and_dataset(bmpname,10,save_dir) 
+                
+                
